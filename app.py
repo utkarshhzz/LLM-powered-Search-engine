@@ -2,8 +2,10 @@ import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.utilities import ArxivAPIWrapper,WikipediaAPIWrapper
 from langchain_community.tools import ArxivQueryRun,WikipediaQueryRun,DuckDuckGoSearchRun
-from langchain.agents import initialize_agent, AgentType
 from langchain.callbacks import StreamlitCallbackHandler
+from langchain.agents import AgentExecutor,create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+
 import os
 from dotenv import load_dotenv
 load_dotenv()
@@ -32,7 +34,7 @@ if "messages" not in st.session_state:
     ]
     
 for msg in st.session_state.messages:
-    st.chat_message(msg["role"].write(msg['content']))
+    st.chat_message(msg["role"]).write(msg['content'])
     
 if prompt:=st.chat_input(placeholder="What is machine learning"):
     st.session_state.messages.append({"role":"user","content":prompt})
@@ -41,12 +43,25 @@ if prompt:=st.chat_input(placeholder="What is machine learning"):
     llm=ChatGroq(api_key=api_key,model="llama-3.1-8b-instant",streaming=True)
     tools=[search,arxiv,wikipedia]
     
-    search_agent=initialize_agent(tools,llm,agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,verbose=True )
+    prompt_template=ChatPromptTemplate.from_messages([
+        ("system","You are a helpful assistant.Use tools if neccesary to answer the user's queries"),
+        ("human","{input}"),
+        ("placeholder","{agent_scratchpad}"),
+    ]) 
+    agent=create_tool_calling_agent(llm,tools,prompt_template)
+    
+    # creating the executor
+    agent_executor=AgentExecutor(agent=agent,tools=tools,verbose=True)
     with st.spinner("Generating response..."):
         with st.chat_message("assistant"):
-            st_cb=StreamlitCallbackHandler(st.container(),expand_new_thoughts=False)
-            response=search_agent.run(st.session_state.messages,callbacks=[st_cb])
-            st.session_state.messages.append({"role":"assistant","content":response})
-            st.write(response)
+            st_cb=StreamlitCallbackHandler(st.container())
             
+            response=agent_executor.invoke(
+                {"input":prompt},
+                callbacks=[st_cb]
+            )
+            
+            result_text=response["output"]
+            st.session_state.messages.append({"role":"assistant","content":result_text})
+            st.write(result_text)
     
